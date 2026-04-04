@@ -16,6 +16,11 @@ struct FileHistoryRequest {
     max_commits: Option<usize>,
 }
 
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct HotspotRequest {
+    top_n: Option<usize>,
+}
+
 // error wrapping
 // no more .map_err() for each line
 struct ToolError(rmcp::ErrorData);
@@ -117,6 +122,51 @@ impl GitForensicsServer {
                 if count >= limit {
                     break;
                 }
+            }
+            Ok(output)
+        })
+        .await
+        .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))?
+        .map_err(|e| e.0)?;
+
+        Ok(CallToolResult::success(vec![Content::text(result)]))
+    }
+
+    #[tool(description = "find files that change most often")]
+    async fn hotspots(
+        &self,
+        Parameters(HotspotRequest { top_n }): Parameters<HotspotRequest>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let repo_path = self.repo_path.clone();
+        let result = tokio::task::spawn_blocking(move || -> Result<String, ToolError> {
+            let repo = git2::Repository::open(&repo_path)?;
+            let mut revwalk = repo.revwalk()?;
+            revwalk.push_head()?;
+            revwalk.set_sorting(git2::Sort::TIME)?;
+            let mut output = String::new();
+            let mut counts = std::collections::HashMap::new();
+
+            for oid in revwalk {
+                let oid = oid?;
+                let commit = repo.find_commit(oid)?;
+
+                let tree = commit.tree()?;
+                let parent_tree = commit.parent(0).ok().and_then(|p| p.tree().ok());
+
+                let diff = repo.diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None)?;
+
+                for delta in diff.deltas() {
+                    if let Some(p) = delta.new_file().path() {
+                        let key = p.to_string_lossy().to_string();
+                        *counts.entry(key).or_insert(0) += 1;
+                    }
+                }
+            }
+            let mut sorted: Vec<_> = counts.into_iter().collect();
+            sorted.sort_by(|a, b| b.1.cmp(&a.1));
+            let limit = top_n.unwrap_or(10);
+            for (file, count) in sorted.into_iter().take(limit) {
+                output.push_str(&format!("{} — {} commits\n", file, count));
             }
             Ok(output)
         })
