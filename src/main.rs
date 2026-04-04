@@ -74,39 +74,58 @@ impl GitForensicsServer {
         Ok(CallToolResult::success(vec![Content::text(result)]))
     }
 
-    // #[tool(description = "show commit history for a specific file")]
-    // async fn history(
-    //     &self,
-    //     Parameters(FileHistoryRequest { path, max_commits }): Parameters<FileHistoryRequest>,
-    // ) -> Result<CallToolResult, rmcp::ErrorData> {
-    //     let repo_path = self.repo_path.clone();
-    //     let result = tokio::task::spawn_blocking(move || -> Result<String, ToolError> {
-    //         let repo = git2::Repository::open(&repo_path)?;
-    //         let mut revwalk = repo.revwalk()?;
-    //         revwalk.push_head()?;
-    //         revwalk.set_sorting(git2::Sort::TIME)?;
+    #[tool(description = "show commit history for a specific file")]
+    async fn history(
+        &self,
+        Parameters(FileHistoryRequest { path, max_commits }): Parameters<FileHistoryRequest>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let repo_path = self.repo_path.clone();
+        let result = tokio::task::spawn_blocking(move || -> Result<String, ToolError> {
+            let repo = git2::Repository::open(&repo_path)?;
+            let mut revwalk = repo.revwalk()?;
+            revwalk.push_head()?;
+            revwalk.set_sorting(git2::Sort::TIME)?;
+            let mut output = String::new();
+            let limit = max_commits.unwrap_or(20);
+            let mut count = 0;
 
-    //         for oid in revwalk {
-    //             let oid = oid?;
-    //             let commit = repo.find_commit(oid)?;
+            for oid in revwalk {
+                let oid = oid?;
+                let commit = repo.find_commit(oid)?;
 
-    //             let tree = commit.tree()?;
-    //             let parent_tree = commit.parent(0).ok().and_then(|p| p.tree().ok());
+                let tree = commit.tree()?;
+                let parent_tree = commit.parent(0).ok().and_then(|p| p.tree().ok());
 
-    //             let diff = repo.diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None);
+                let diff = repo.diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None)?;
 
-    //             let dominated = diff
-    //                 .deltas()
-    //                 .any(|d| d.new_file().path() == Some(std::Path::new(&path)));
+                let touched = diff
+                    .deltas()
+                    .any(|d| d.new_file().path() == Some(std::path::Path::new(&path)));
 
-    //             if !touched {
-    //                 continue;
-    //             }
-    //         }
-    //         todo!()
-    //     });
-    //     todo!()
-    // }
+                if !touched {
+                    continue;
+                }
+
+                let id = &commit.id().to_string()[..8];
+                let sig = commit.author();
+                let author = sig.name().unwrap_or("unknown");
+                let message = commit.summary();
+                let summary = message.unwrap_or("");
+                let time = commit.time().seconds();
+                output.push_str(&format!("{} {} — {} ({})\n", id, time, author, summary));
+                count += 1;
+                if count >= limit {
+                    break;
+                }
+            }
+            Ok(output)
+        })
+        .await
+        .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))?
+        .map_err(|e| e.0)?;
+
+        Ok(CallToolResult::success(vec![Content::text(result)]))
+    }
 }
 
 // for the mcp
