@@ -2,7 +2,7 @@
 
 MCP server in Rust that exposes git repo analysis tools over stdio.
 
-https://github.com/user-attachments/assets/7f93067d-49da-4e82-a5e0-69837626e38f
+<video src="https://github.com/user-attachments/assets/7f93067d-49da-4e82-a5e0-69837626e38f" muted autoplay loop playsinline></video>
 
 ## Tools
 
