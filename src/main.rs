@@ -10,6 +10,22 @@ struct BlameRequest {
     path: String,
 }
 
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct FileHistoryRequest {
+    path: String,
+    max_commits: Option<usize>,
+}
+
+// error wrapping
+// no more .map_err() for each line
+struct ToolError(rmcp::ErrorData);
+
+impl From<git2::Error> for ToolError {
+    fn from(e: git2::Error) -> Self {
+        ToolError(rmcp::ErrorData::internal_error(e.to_string(), None))
+    }
+}
+
 #[derive(Clone)]
 struct GitForensicsServer {
     repo_path: PathBuf,
@@ -25,18 +41,15 @@ impl GitForensicsServer {
         }
     }
 
-    #[tool(description = "show git blame for a file, who last mofidied each line")]
+    #[tool(description = "show git blame for a file, who last modified each line")]
     async fn blame(
         &self,
         Parameters(BlameRequest { path }): Parameters<BlameRequest>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let repo_path = self.repo_path.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            let repo = git2::Repository::open(&repo_path)
-                .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))?;
-            let blame = repo
-                .blame_file(std::path::Path::new(&path), None)
-                .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))?;
+        let result = tokio::task::spawn_blocking(move || -> Result<String, ToolError> {
+            let repo = git2::Repository::open(&repo_path)?;
+            let blame = repo.blame_file(std::path::Path::new(&path), None)?;
             let mut output = String::new();
             for (_i, hunk) in blame.iter().enumerate() {
                 let sig = hunk.final_signature();
@@ -52,13 +65,48 @@ impl GitForensicsServer {
                 ));
             }
 
-            Ok::<_, rmcp::ErrorData>(output)
+            Ok(output)
         })
         .await
-        .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))??;
+        .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))?
+        .map_err(|e| e.0)?;
 
         Ok(CallToolResult::success(vec![Content::text(result)]))
     }
+
+    // #[tool(description = "show commit history for a specific file")]
+    // async fn history(
+    //     &self,
+    //     Parameters(FileHistoryRequest { path, max_commits }): Parameters<FileHistoryRequest>,
+    // ) -> Result<CallToolResult, rmcp::ErrorData> {
+    //     let repo_path = self.repo_path.clone();
+    //     let result = tokio::task::spawn_blocking(move || -> Result<String, ToolError> {
+    //         let repo = git2::Repository::open(&repo_path)?;
+    //         let mut revwalk = repo.revwalk()?;
+    //         revwalk.push_head()?;
+    //         revwalk.set_sorting(git2::Sort::TIME)?;
+
+    //         for oid in revwalk {
+    //             let oid = oid?;
+    //             let commit = repo.find_commit(oid)?;
+
+    //             let tree = commit.tree()?;
+    //             let parent_tree = commit.parent(0).ok().and_then(|p| p.tree().ok());
+
+    //             let diff = repo.diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None);
+
+    //             let dominated = diff
+    //                 .deltas()
+    //                 .any(|d| d.new_file().path() == Some(std::Path::new(&path)));
+
+    //             if !touched {
+    //                 continue;
+    //             }
+    //         }
+    //         todo!()
+    //     });
+    //     todo!()
+    // }
 }
 
 // for the mcp
