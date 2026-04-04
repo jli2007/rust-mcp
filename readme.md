@@ -2,6 +2,8 @@
 
 MCP server in Rust that exposes git repo analysis tools over stdio.
 
+https://github.com/user-attachments/assets/7f93067d-49da-4e82-a5e0-69837626e38f
+
 ## Tools
 
 - **blame** — who last modified each line of a file
